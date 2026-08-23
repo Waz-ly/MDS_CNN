@@ -1,0 +1,10 @@
+# Use python3.10.4
+
+# To install:
+# pip install "setuptools<82" wheel
+# pip install -r requirements.txt --no-build-isolation
+
+setuptools<82
+openl3 # installs numpy, scipy, scikit-learn, librosa
+matplotlib
+torch
