@@ -1,4 +1,4 @@
-from train import EmbeddingNet, build_batch, stress_loss
+from train import EmbeddingNet, build_batch, total_stress_loss
 import torch
 import numpy as np
 import utils.dir_manage
@@ -17,9 +17,8 @@ if __name__ == "__main__":
     model.eval()
 
     test_sets = [dataset for dataset in utils.dir_manage.list_datasets() if dataset in TEST_SET]
-    vecs, target, pair_mask = build_batch(test_sets, variants=False)
+    test_batch = build_batch(test_sets, variants=False)
 
-    coords = model(vecs)
-    loss = stress_loss(coords, target, pair_mask)
+    loss = total_stress_loss(model, test_batch, rescale=False)
 
     print(loss.item())

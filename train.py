@@ -24,73 +24,102 @@ class EmbeddingNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-def build_batch(datasets, variants=True):
+def build_batch(
+        datasets: list[str],
+        variants: bool=True
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
 
     variations, no_variant = utils.data_augmentation.get_variant_meshgrid()
 
-    total_embeddings = sum(
-        len(utils.dir_manage.list_dataset_embedding(dataset))
-        for dataset in datasets
-    )
-    total_embeddings //= 1 if variants else len(variations)
+    batches = []
 
-    embeddings_list = []
-    true_dissimilarity_matrix = torch.zeros((total_embeddings, total_embeddings))
-
-    offset = 0
     for dataset in datasets:
 
-        dataset_embedding_files = utils.dir_manage.list_dataset_embedding(dataset)
         dataset_embeddings = torch.stack([
             torch.from_numpy(np.load(os.path.join(EMBEDDING_DIR, dataset, file))).float()
-            for file in dataset_embedding_files
+            for file in utils.dir_manage.list_dataset_embedding(dataset)
             if variants or len(file.split("=")) < 4
         ])
 
-        dissimilarity_matrix = torch.from_numpy(
-            np.loadtxt(os.path.join(DATA_DIR, f"{dataset}_dissimilarity_matrix.txt"))
-        ).float()
-
-        true_dissimilarity_matrix[
-            offset : offset + len(dataset_embeddings),
-            offset : offset + len(dataset_embeddings)
-        ] = torch.repeat_interleave(
+        target_matrix = (
             torch.repeat_interleave(
-                dissimilarity_matrix,
+            torch.repeat_interleave(
+                torch.from_numpy(
+                    np.loadtxt(os.path.join(DATA_DIR, f"{dataset}_dissimilarity_matrix.txt"))
+                ).float(),
                 len(variations) if variants else 1, dim=0
             ),  len(variations) if variants else 1, dim=1
+            )
         )
 
-        offset += len(dataset_embeddings)
-        embeddings_list.append(dataset_embeddings)
+        batches.append([dataset_embeddings, target_matrix])
 
-    embeddings_list = torch.cat(embeddings_list, dim=0)
-    dissimilarity_exists_mask = true_dissimilarity_matrix > 1e-8
+    return batches
 
-    return embeddings_list, true_dissimilarity_matrix, dissimilarity_exists_mask
+def get_scale_mismatch(
+        predicted_coords: torch.Tensor,
+        target_matrix: torch.Tensor,
+    ):
 
-def stress_loss(coords, target_dissim, pair_mask):
-    pred_dist = torch.cdist(coords, coords, p=2)
-    return torch.mean(torch.abs(pred_dist[pair_mask] - target_dissim[pair_mask]))
+    entry_mask = target_matrix > 1e-8
+    predicted_matrix = torch.cdist(predicted_coords, predicted_coords, p=2)
 
-# def stress_loss(coords, target_matrix):
+    with torch.no_grad():
+        average_predicted_distance = torch.mean(predicted_matrix[entry_mask])
+        average_target_distance = torch.mean(target_matrix[entry_mask])
+        scale = average_predicted_distance / average_target_distance
 
-#     entry_available = target_matrix > 1e-8
-#     predicted_distance = torch.cdist(coords, coords, p=2)
+    print(f"target matrix rescaled by: {scale}")
 
+    return scale
+
+def stress_loss(
+        predicted_coords: torch.Tensor,
+        target_matrix: torch.Tensor,
+        rescale: bool = False,
+    ) -> tuple[torch.Tensor, int]:
+
+    entry_mask = target_matrix > 1e-8
+    predicted_matrix = torch.cdist(predicted_coords, predicted_coords, p=2)
+
+    scale = 1 if not rescale else get_scale_mismatch(predicted_coords, target_matrix)
+    adjusted_target_matrix = target_matrix * scale
+
+    return torch.mean(torch.abs(predicted_matrix[entry_mask] - adjusted_target_matrix[entry_mask])), entry_mask.sum().item()
+
+def total_stress_loss(
+        model: torch.nn.Module,
+        batch: list[tuple[torch.Tensor, torch.Tensor]],
+        rescale: bool = False,
+    ) -> torch.Tensor:
+
+    total_loss: torch.Tensor = 0.0
+    total_pairs = 0
+
+    for [embeddings, target_matrix] in batch:
+
+        predicted_coords = model(embeddings)
+        loss, n_pairs = stress_loss(predicted_coords, target_matrix, rescale)
+
+        total_loss += loss * n_pairs
+        total_pairs += n_pairs
+
+    mean_loss = total_loss / total_pairs
+
+    return mean_loss
 
 if __name__ == "__main__":
 
     training_sets = [dataset for dataset in utils.dir_manage.list_datasets() if not dataset in TEST_SET]
-    vecs, target, pair_mask = build_batch(training_sets, variants=False)
+    training_batch = build_batch(training_sets, variants=False)
+    in_dim = training_batch[0][0].shape[1]
 
-    model = EmbeddingNet(layer_dims=[vecs.shape[1], 64, 64, 64, 8])
+    model = EmbeddingNet(layer_dims=[in_dim, 64, 64, 64, 8])
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
 
-    for epoch in range(2000):
+    for epoch in range(1000):
         optimizer.zero_grad()
-        coords = model(vecs)
-        loss = stress_loss(coords, target, pair_mask)
+        loss = total_stress_loss(model, training_batch, rescale=False)
         loss.backward()
         optimizer.step()
 
@@ -100,6 +129,6 @@ if __name__ == "__main__":
     print("done training...")
 
     with open("model/model_info.txt", "w") as file:
-        file.write(f"model size: {vecs.shape[1]}")
+        file.write(f"model size: {in_dim}")
 
     torch.save(model.state_dict(), "model/mapper.pth")

@@ -1,1 +1,1 @@
-TEST_SET = ["Patil2012_DX4", "Siedenburg2016_e2set2"]
+TEST_SET = ["Patil2012_DX4", "Siedenburg2016_e2set2", "Barthet2010"]
