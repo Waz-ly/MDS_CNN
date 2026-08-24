@@ -24,9 +24,6 @@ class EmbeddingNet(nn.Module):
     def forward(self, x):
         return self.net(x)
 
-        x = self.net(x)
-        return x / x.norm(dim=1, keepdim=True).clamp_min(1e-8)
-
 def build_batch(datasets, variants=True):
 
     variations, no_variant = utils.data_augmentation.get_variant_meshgrid()
@@ -76,6 +73,12 @@ def stress_loss(coords, target_dissim, pair_mask):
     pred_dist = torch.cdist(coords, coords, p=2)
     return torch.mean(torch.abs(pred_dist[pair_mask] - target_dissim[pair_mask]))
 
+# def stress_loss(coords, target_matrix):
+
+#     entry_available = target_matrix > 1e-8
+#     predicted_distance = torch.cdist(coords, coords, p=2)
+
+
 if __name__ == "__main__":
 
     training_sets = [dataset for dataset in utils.dir_manage.list_datasets() if not dataset in TEST_SET]
@@ -84,10 +87,9 @@ if __name__ == "__main__":
     model = EmbeddingNet(layer_dims=[vecs.shape[1], 64, 64, 64, 8])
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.01)
 
-    for epoch in range(5000):
+    for epoch in range(2000):
         optimizer.zero_grad()
         coords = model(vecs)
-        coords = coords / coords.norm(dim=1, keepdim=True).clamp_min(1e-8)
         loss = stress_loss(coords, target, pair_mask)
         loss.backward()
         optimizer.step()
