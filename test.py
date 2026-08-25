@@ -1,7 +1,5 @@
 from train import EmbeddingNet, build_batch, total_stress_loss
 import torch
-import numpy as np
-import utils.dir_manage
 from utils.train_set_config import *
 
 
@@ -16,9 +14,9 @@ if __name__ == "__main__":
     model.load_state_dict(torch.load("model/mapper.pth"))
     model.eval()
 
-    test_sets = [dataset for dataset in utils.dir_manage.list_datasets() if dataset in TEST_SET]
-    test_batch = build_batch(test_sets, variants=False)
+    test_batch = build_batch(TEST_SET, variants=False, adjusted=False)
 
     loss = total_stress_loss(model, test_batch, rescale=False)
-
+    print(loss.item())
+    loss = total_stress_loss(model, test_batch, rescale=True)
     print(loss.item())

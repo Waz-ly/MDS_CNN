@@ -26,7 +26,8 @@ class EmbeddingNet(nn.Module):
 
 def build_batch(
         datasets: list[str],
-        variants: bool=True
+        variants: bool=True,
+        adjusted: bool=False
     ) -> list[tuple[torch.Tensor, torch.Tensor]]:
 
     variations, no_variant = utils.data_augmentation.get_variant_meshgrid()
@@ -45,7 +46,12 @@ def build_batch(
             torch.repeat_interleave(
             torch.repeat_interleave(
                 torch.from_numpy(
-                    np.loadtxt(os.path.join(DATA_DIR, f"{dataset}_dissimilarity_matrix.txt"))
+                    np.loadtxt(
+                        os.path.join(
+                            DATA_DIR if not adjusted else ADJUST_DATA_DIR,
+                            f"{dataset}_dissimilarity_matrix.txt"
+                        )
+                    )
                 ).float(),
                 len(variations) if variants else 1, dim=0
             ),  len(variations) if variants else 1, dim=1
@@ -110,8 +116,7 @@ def total_stress_loss(
 
 if __name__ == "__main__":
 
-    training_sets = [dataset for dataset in utils.dir_manage.list_datasets() if not dataset in TEST_SET]
-    training_batch = build_batch(training_sets, variants=False)
+    training_batch = build_batch(TRAIN_SET, variants=False, adjusted=True)
     in_dim = training_batch[0][0].shape[1]
 
     model = EmbeddingNet(layer_dims=[in_dim, 64, 64, 64, 8])
