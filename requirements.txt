@@ -8,3 +8,5 @@ setuptools<82
 openl3 # installs numpy, scipy, scikit-learn, librosa
 matplotlib
 torch
+torchmetrics
+optuna
