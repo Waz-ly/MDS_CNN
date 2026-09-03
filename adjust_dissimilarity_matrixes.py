@@ -4,44 +4,86 @@ from utils.dir_config import *
 import utils.dir_manage
 
 adjustment = {
-    "Barthet2010": [0.8037, -0.0228],
-    "Grey1977": [0.8079, -0.2427],
-    "Grey1978": [0.7165, -0.2686],
-    "Iverson1993_Onset": [0.239, -0.4121],
-    "Iverson1993_Remainder": [0.9179, 0.0122],
-    "Iverson1993_Whole": [0.6034, -0.1195],
-    "Lakatos2000_Comb": [1.0888, -0.059],
-    "Lakatos2000_Harm": [0.8324, -0.2259],
-    "Lakatos2000_Perc": [1.9099, -0.0829],
-    "McAdams1995": [8.1218, 0.293],
-    "Patil2012_A3": [0.8398, -0.1993],
-    "Patil2012_DX4": [0.7496, -0.1554],
-    "Patil2012_GD4": [0.9512, -0.1114],
-    "Saitis2020_e2set1_general": [0.995, -0.1441],
-    "Siedenburg2016_e2set1": [0.995, -0.1441],
-    "Siedenburg2016_e2set2": [0.8974, -0.1516],
-    "Siedenburg2016_e2set3": [1.3704, -0.1111],
-    "Siedenburg2016_e3": [1.3704, -0.1111],
-    "Vahidi2020": [0.3809, -0.4748],
-    "Zacharakis2014_english": [1.231, -0.1407],
-    "Zacharakis2014_greek": [1.231, -0.1407]
+    "Barthet2010": 1.1120,
+    "Grey1977": 0.8290,
+    "Grey1978": 0.8605,
+    "Iverson1993_Onset": 0.2514,
+    "Iverson1993_Remainder": 1.0424,
+    "Iverson1993_Whole": 0.7811,
+    "Lakatos2000_Comb": 0.9791,
+    "Lakatos2000_Harm": 0.6829,
+    "Lakatos2000_Perc": 0.9543,
+    "McAdams1995": 5.3650,
+    "Patil2012_A3": 0.8724,
+    "Patil2012_DX4": 1.0166,
+    "Patil2012_GD4": 0.9591,
+    "Saitis2020_e2set1_general": 0.7626,
+    "Siedenburg2016_e2set1": 0.7626,
+    "Siedenburg2016_e2set2": 0.7780,
+    "Siedenburg2016_e2set3": 0.9564,
+    "Siedenburg2016_e3": 0.9564,
+    "Vahidi2020": 0.4473,
+    "Zacharakis2014_english": 0.8766,
+    "Zacharakis2014_greek": 0.8766
 }
 
-for dataset in utils.dir_manage.list_datasets():
+from utils.dir_manage import list_datasets
+from utils.dir_config import *
+from utils.train_set_config import *
+import json
+from train import train, build_batch
+from stress import get_scale_mismatch
+import torch
 
-    dissimilarity_matrix = np.loadtxt(os.path.join(DATA_DIR, f"{dataset}_dissimilarity_matrix.txt"))
+def get_adjustment(
+        content_type="music",
+        n_trials=1,
+    ):
 
-    entry_mask = dissimilarity_matrix > 1e-8
-    scale, offset = adjustment[dataset]
+    with open(f"data/default_settings.json") as f:
+        settings = json.load(f)["params"]
 
-    adjusted_dissimilarity_matrix = (
-        scale * (dissimilarity_matrix - dissimilarity_matrix[entry_mask].mean())
-        + dissimilarity_matrix[entry_mask].mean() + offset
-    ) * entry_mask
+    scaling = {}
 
-    np.savetxt(
-        os.path.join(ADJUST_DATA_DIR, f"{dataset}_dissimilarity_matrix.txt"),
-        adjusted_dissimilarity_matrix,
-        fmt="%.15f"
-    )
+    for test_set in SINGLE_SETS:
 
+        train_set = [dataset for dataset in list_datasets() if dataset not in test_set]
+        test_batch = build_batch(test_set, variants=False, adjusted=False, content_type=content_type)
+
+        for dataset, [embeddings, target_matrix] in zip(test_set, test_batch):
+
+            scale = 0
+
+            for i in range(n_trials):
+
+                model = train(train_set, content_type=content_type, **settings)
+                model.eval()
+                
+                predicted_coords = model(embeddings)
+                predicted_matrix = torch.cdist(predicted_coords, predicted_coords, p=2)
+
+                scale += get_scale_mismatch(predicted_matrix, target_matrix)
+
+            scale /= n_trials
+            scaling[dataset] = scale.item()
+
+    with open(f"data/scaling.json", "w") as f:
+        json.dump(scaling, f, indent=2)
+
+def adjust():
+
+    for dataset in utils.dir_manage.list_datasets():
+
+        dissimilarity_matrix = np.loadtxt(os.path.join(DATA_DIR, f"{dataset}_dissimilarity_matrix.txt"))
+
+        adjusted_dissimilarity_matrix = adjustment[dataset] * dissimilarity_matrix
+
+        np.savetxt(
+            os.path.join(ADJUST_DATA_DIR, f"{dataset}_dissimilarity_matrix.txt"),
+            adjusted_dissimilarity_matrix,
+            fmt="%.15f"
+        )
+
+if __name__ == "__main__":
+
+    get_adjustment()

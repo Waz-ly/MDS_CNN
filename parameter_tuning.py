@@ -14,61 +14,46 @@ def quick_cv_score(
     weight_decay: float,
     hidden_dim: int,
     n_hidden: int,
+    out_dim: int,
     n_epochs: int,
     activation = "relu",
-    dropout = 0.0,
     folds: list[str] | None = None,
-    repeats: int = 3,
-    trial: optuna.Trial | None = None,
 ) -> float:
     """Leave-one-dataset-out CV, scored on normalize+MAE. Lower is better."""
     folds = folds if folds is not None else SINGLE_SETS
     fold_scores = []
 
-    for fold_idx, test_set in enumerate(folds):
+    for idx, test_set in enumerate(folds):
         train_set = [d for d in list_datasets() if d not in test_set]
         test_batch = build_batch(test_set, variants=False, adjusted=False)
 
-        rep_scores = []
-        for _ in range(repeats):
-            model = train(train_set, lr, weight_decay, hidden_dim, n_hidden, n_epochs, activation, dropout)
-            model.eval()
-            with torch.no_grad():
-                score = total_stress_loss(
-                    model, test_batch, rescale_type="normalize", loss_type="triplet"
-                ).item()
-            rep_scores.append(score)
-
-        fold_mean = float(np.mean(rep_scores))
-        fold_scores.append(fold_mean)
-
-        # Let Optuna prune bad trials early, partway through folds
-        if trial is not None:
-            trial.report(float(np.mean(fold_scores)), fold_idx)
-            if trial.should_prune():
-                raise optuna.TrialPruned()
+        model = train(train_set, lr, weight_decay, hidden_dim, n_hidden, out_dim, n_epochs, activation)
+        model.eval()
+        with torch.no_grad():
+            score, _ = total_stress_loss(
+                model, test_batch, rescale_type="normalize", loss_type="MAE"
+            )
+        fold_scores.append(score.item())
 
     return float(np.mean(fold_scores))
 
-def objective(trial: optuna.Trial, search_folds: list[str], repeats: int) -> float:
+def objective(trial: optuna.Trial, search_folds: list[str], out_dim) -> float:
 
-    lr = trial.suggest_float("lr", 1e-5, 1e-2, log=True)
+    lr = trial.suggest_float("lr", 1e-6, 1e-3, log=True)
     weight_decay = trial.suggest_float("weight_decay", 1e-4, 1e-1, log=True)
-    hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256])
+    hidden_dim = trial.suggest_categorical("hidden_dim", [32, 64, 128, 256, 512])
     n_hidden = trial.suggest_int("n_hidden", 1, 4)
-    n_epochs = trial.suggest_int("n_epochs", 100, 1500, step=100)
-    activation = trial.suggest_categorical("activation", ["relu", "sigmoid", "tanh", "leaky"])
-    dropout = trial.suggest_float("dropout", 0.0, 0.5)
+    n_epochs = trial.suggest_int("n_epochs", 1000, 5000, step=200)
 
     return quick_cv_score(
-        lr, weight_decay, hidden_dim, n_hidden, n_epochs, activation, dropout,
-        folds=search_folds, repeats=repeats, trial=trial,
+        lr, weight_decay, hidden_dim, n_hidden, out_dim, n_epochs, "relu",
+        folds=search_folds,
     )
 
 def optimize(
     n_trials: int = 50,
     n_folds: float = 5,
-    search_repeats: int = 3,
+    out_dim: int = 3,
     seed: int = 42,
 ) -> dict:
     """
@@ -77,24 +62,25 @@ def optimize(
       2. Full validation of the winning config on all folds with the full repeat count.
 
     Training always uses rescale_type="none", loss_type="MAE".
-    Tuning/selection always uses rescale_type="normalize", loss_type="triplet".
+    Tuning/selection always uses rescale_type="normalize", loss_type="MAE".
     """
     rng = random.Random(seed)
     search_folds = rng.sample(SINGLE_SETS, n_folds)
 
     study = optuna.create_study(
-        direction="maximize",
+        direction="minimize",
         sampler=optuna.samplers.TPESampler(seed=seed),
-        pruner=optuna.pruners.MedianPruner(n_warmup_steps=1),
+        pruner=optuna.pruners.NopPruner(),
     )
+
     study.optimize(
-        lambda t: objective(t, search_folds, search_repeats),
+        lambda t: objective(t, search_folds, out_dim),
         n_trials=n_trials,
     )
 
     best_params = study.best_params
     print(f"Best params from search: {best_params}")
-    print(f"Search score (normalize/MAE, {n_folds} folds, {search_repeats} reps): "
+    print(f"Search score (normalize/MAE, {n_folds} folds): "
           f"{study.best_value:.4f}")
 
     return {
@@ -103,7 +89,7 @@ def optimize(
         "study": study,
     }
 
-def save_result(result: dict, path: str = "tuning_result.json") -> None:
+def save_result(result: dict, path: str = "data/tuning_result.json") -> None:
     to_save = {
         "params": result["params"],
         "search_score": result["search_score"],
@@ -115,8 +101,8 @@ def save_result(result: dict, path: str = "tuning_result.json") -> None:
 if __name__ == "__main__":
 
     result = optimize(
-        n_trials=150,
-        n_folds=4, # 4 of 21 for validation
-        search_repeats=2,
+        n_trials=50,
+        n_folds=9, # 9 of 18 for validation
+        out_dim=256
     )
-    save_result(result)
+    save_result(result, "data/tuning_256D.json")

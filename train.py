@@ -12,19 +12,21 @@ from stress import total_stress_loss
 def build_batch(
         datasets: list[str],
         variants: bool=True,
-        adjusted: bool=False
+        adjusted: bool=False,
+        content_type: str="music",
     ) -> list[tuple[torch.Tensor, torch.Tensor]]:
 
     variations, no_variant = utils.data_augmentation.get_variant_meshgrid()
+    n_variants = len(variations)
 
     batches = []
 
     for dataset in datasets:
 
         dataset_embeddings = torch.stack([
-            torch.from_numpy(np.load(os.path.join(EMBEDDING_DIR, dataset, file))).float()
+            torch.from_numpy(np.load(os.path.join(EMBEDDING_DIR, content_type, dataset, file))).float()
             for file in utils.dir_manage.list_dataset_embedding(dataset)
-            if variants or len(file.split("=")) < 4
+            if len(file.split("=")) < 4 or variants
         ])
 
         target_matrix = (
@@ -38,8 +40,8 @@ def build_batch(
                         )
                     )
                 ).float(),
-                len(variations) if variants else 1, dim=0
-            ),  len(variations) if variants else 1, dim=1
+                n_variants if variants else 1, dim=0
+            ),  n_variants if variants else 1, dim=1
             )
         )
 
@@ -49,23 +51,26 @@ def build_batch(
 
 def train(
         datasets: list[str]=TRAIN_SET,
-        lr: float = 2.34e-5,
-        weight_decay: float = 1.7e-4,
+        lr: float = 1e-4,
+        weight_decay: float = 0.01,
+        in_dim: int = 21504,
         hidden_dim: int = 32,
-        n_hidden: int = 2,
-        epochs: int = 1000,
-        activation = "relu",
-        dropout = 0.041
+        n_hidden: int = 3,
+        out_dim: int = 8,
+        n_epochs: int = 1000,
+        content_type = "music",
     ) -> EmbeddingNet:
 
-    training_batch = build_batch(datasets, variants=False, adjusted=True)
+    training_batch = build_batch(datasets, variants=True, adjusted=True, content_type=content_type)
     in_dim = training_batch[0][0].shape[1]
 
-    layer_dims = [in_dim] + [hidden_dim] * n_hidden + [8]
-    model = EmbeddingNet(layer_dims=layer_dims, activation=activation, dropout=dropout)
+    layer_dims = [in_dim] + [hidden_dim] * n_hidden + [out_dim]
+    model = EmbeddingNet(layer_dims=layer_dims)
+    model.train()
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)
 
-    for epoch in range(epochs):
+    for epoch in range(n_epochs):
+
         optimizer.zero_grad()
         loss, _ = total_stress_loss(model, training_batch, rescale_type="none", loss_type="MAE")
         loss.backward()

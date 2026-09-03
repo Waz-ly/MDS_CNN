@@ -10,7 +10,7 @@ def get_variant_meshgrid():
 
     variation_dict = {
         "delay": [0, 0.2],
-        "volume": [1, 0.5],
+        "volume": [1],
         "pitch": [0, 1, -1],
     }
 

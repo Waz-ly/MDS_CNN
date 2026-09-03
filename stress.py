@@ -19,6 +19,26 @@ def _prepare_rank_scores(pred: torch.Tensor, true: torch.Tensor) -> tuple[torch.
 def mae_metric(pred: torch.Tensor, true: torch.Tensor) -> torch.Tensor:
     return torch.mean(torch.abs(pred - true))
 
+def mse_metric(pred: torch.Tensor, true: torch.Tensor) -> torch.Tensor:
+    return torch.mean(torch.square(pred - true))
+
+def soft_triplet_loss(pred: torch.Tensor, true: torch.Tensor, margin: float = 0.1, tau: float = 0.1) -> torch.Tensor:
+    true_diff = true.unsqueeze(1) - true.unsqueeze(2)
+    pred_diff = pred.unsqueeze(1) - pred.unsqueeze(2)
+
+    valid_mask = (torch.abs(true_diff) > margin).float()
+    target_direction = torch.sign(true_diff)
+
+    soft_agreement = torch.sigmoid((target_direction * pred_diff) / tau)
+
+    valid_triplets = valid_mask.sum()
+    if valid_triplets == 0:
+        return torch.tensor(0.0, device=pred.device, requires_grad=True)
+
+    mean_soft_agreement = (soft_agreement * valid_mask).sum() / valid_triplets
+
+    return 1.0 - mean_soft_agreement
+
 def ndcg_retrieve_sim(pred: torch.Tensor, true: torch.Tensor) -> torch.Tensor:
     pred, true = _prepare_rank_scores(pred, true)
     pred = 1 - pred
@@ -55,15 +75,7 @@ def triplet_agreement(pred: torch.Tensor, true: torch.Tensor, margin: float = 0.
         )
     return scores.mean()
 
-def spearman_corr(pred: torch.Tensor, true: torch.Tensor) -> torch.Tensor:
-    pred, true = _prepare_rank_scores(pred, true)
-    return spearman_corrcoef(pred.T, true.T).mean()
-
-def kendall_corr(pred: torch.Tensor, true: torch.Tensor) -> torch.Tensor:
-    pred, true = _prepare_rank_scores(pred, true)
-    return torch.nanmean(kendall_rank_corrcoef(pred.T, true.T))
-
-def get_linear_mismatch(
+def get_scale_mismatch(
         predicted_matrix: torch.Tensor,
         target_matrix: torch.Tensor,
     ):
@@ -72,15 +84,9 @@ def get_linear_mismatch(
 
     with torch.no_grad():
 
-        scale = predicted_matrix[entry_mask].std() / target_matrix[entry_mask].std()
-        offset = predicted_matrix[entry_mask].mean() - target_matrix[entry_mask].mean()
+        scale = predicted_matrix[entry_mask].mean() / target_matrix[entry_mask].mean()
 
-    print(f"target matrix rescaled by: {scale.item():.4f}, offset by: {offset.item():.4f}")
-
-    with open("rescale.log", "a") as f:
-        np.savetxt(f, [[scale.item(), offset.item()]], fmt="%.4f")
-
-    return scale, offset
+    return scale
 
 def stress_loss(
         predicted_coords: torch.Tensor,
@@ -104,27 +110,19 @@ def stress_loss(
             adjusted_target_matrix = target_matrix
             adjusted_predicted_matrix = predicted_matrix
 
-        case "match":
-
-            scale, offset = get_linear_mismatch(predicted_matrix, target_matrix)
-            target_mean = target_matrix[entry_mask].mean()
-
-            adjusted_target_matrix = scale * (target_matrix - target_mean) + target_mean + offset
-            adjusted_predicted_matrix = predicted_matrix
-
         case "normalize":
 
             target_min = target_matrix.min()
             target_max = target_matrix.max()
-            adjusted_target_matrix = (target_matrix - target_min) / (target_max - target_min)
+            adjusted_target_matrix = (target_matrix - target_min) / (target_max - target_min + 1e-8)
 
             pred_min = predicted_matrix.min()
             pred_max = predicted_matrix.max()
-            adjusted_predicted_matrix = (predicted_matrix - pred_min) / (pred_max - pred_min)
+            adjusted_predicted_matrix = (predicted_matrix - pred_min) / (pred_max - pred_min + 1e-8)
 
         case _:
 
-            raise Exception(f"rescale_type must be none, match, or normalize")
+            raise Exception(f"rescale_type must be none, or normalize")
 
     match loss_type:
         case "MAE":
@@ -136,20 +134,10 @@ def stress_loss(
 
             loss_val = triplet_agreement(adjusted_predicted_matrix, adjusted_target_matrix)
             return loss_val, len(adjusted_predicted_matrix)
-
+        
         case "NDCG":
 
             loss_val = ndcg_retrieve_sim(adjusted_predicted_matrix, adjusted_target_matrix)
-            return loss_val, len(adjusted_predicted_matrix)
-
-        case "spearman":
-
-            loss_val = spearman_corr(adjusted_predicted_matrix, adjusted_target_matrix)
-            return loss_val, len(adjusted_predicted_matrix)
-
-        case "kendall":
-
-            loss_val = kendall_corr(adjusted_predicted_matrix, adjusted_target_matrix)
             return loss_val, len(adjusted_predicted_matrix)
 
         case _:

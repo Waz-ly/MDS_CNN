@@ -30,14 +30,17 @@ def list_dataset_audio(dataset):
 
     return sorted(audio_files)
 
-def list_dataset_embedding(dataset):
+def list_dataset_embedding(
+        dataset,
+        content_type="music"
+    ):
 
-    embed_dir = os.path.join(EMBEDDING_DIR, dataset)
+    embed_dir_path = os.path.join(EMBEDDING_DIR, content_type, dataset)
 
-    if not os.path.isdir(embed_dir):
+    if not os.path.isdir(embed_dir_path):
         raise Exception(f"dataset {dataset} not found")
 
-    items = os.listdir(embed_dir)
+    items = os.listdir(embed_dir_path)
 
     embedding_files = [
         item

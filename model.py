@@ -4,50 +4,24 @@ import numpy as np
 import librosa
 import openl3
 
-activation_map = {
-    "relu": nn.ReLU,
-    "tanh": nn.Tanh,
-    "sigmoid": nn.Sigmoid,
-    "leaky": nn.LeakyReLU
-}
-
 class EmbeddingNet(nn.Module):
-    def __init__(self, layer_dims, activation="relu", dropout=0.0):
+    def __init__(self, layer_dims):
         super().__init__()
 
         self.layer_dims = layer_dims
-        self.activation = activation
-        self.dropout = dropout
 
         layers = []
         for in_dim, out_dim in zip(layer_dims[:-1], layer_dims[1:]):
             layers.append(nn.Linear(in_dim, out_dim))
-            layers.append(activation_map[activation]())
-            if dropout > 1e-8:
-                layers.append(nn.Dropout(dropout))
+            layers.append(nn.ReLU())
 
         layers.pop()
-        if dropout > 1e-8:
-            layers.pop()
         layers.append(nn.Sigmoid())
 
         self.net = nn.Sequential(*layers)
 
     def forward(self, x):
         return self.net(x)
-
-    def to_config_dict(self):
-
-        return {
-            "layer_dims": self.layer_dims,
-            "dropout": self.dropout,
-            "activation": self.activation,
-        }
-
-    @classmethod
-    def from_config_dict(cls, config):
-
-        return cls(**config)
 
 TARGET_SR = 22050
 TARGET_SAMPLES = int(4.6 * TARGET_SR)
